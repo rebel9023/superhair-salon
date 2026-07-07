@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 248 250 252;
+    --foreground: 15 23 42;
+
+    --card: 255 255 255;
+    --card-foreground: 15 23 42;
+
+    --popover: 255 255 255;
+    --popover-foreground: 15 23 42;
+
+    --primary: 212 175 55; /* Gold #D4AF37 */
+    --primary-foreground: 255 255 255;
+
+    --secondary: 15 23 42;
+    --secondary-foreground: 255 255 255;
+
+    --muted: 241 245 249;
+    --muted-foreground: 100 116 139;
+
+    --accent: 254 243 199;
+    --accent-foreground: 212 175 55;
+
+    --destructive: 239 68 68;
+    --destructive-foreground: 255 255 255;
+
+    --border: 226 232 240;
+    --input: 226 232 240;
+    --ring: 212 175 55;
+
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    font-family: 'Poppins', sans-serif;
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+}
+
+/* Ezo custom layouts */
+.ezo-header {
+  background-color: #0f172a; /* Luxury Black */
+}
+
+.ezo-card {
+  background: #ffffff;
+  border: 1px solid #dbe2ec;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+}
+
+.ezo-btn-outline {
+  border: 1px solid #c5d0e0;
+  color: #4a5568;
+  background-color: #ffffff;
+}
+.ezo-btn-outline:hover {
+  background-color: #f7fafc;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
+}

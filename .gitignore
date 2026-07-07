@@ -1,0 +1,28 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+
+# Environment secrets
+.env
+backend/.env
+.env.local
+.env.*.local
+
+# MongoDB local data
+db_data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# TypeScript cache
+*.tsbuildinfo
