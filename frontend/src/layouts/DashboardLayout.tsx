@@ -46,10 +46,10 @@ export const DashboardLayout: React.FC = () => {
   const ezoMenuItems = [
     { name: 'Dashboard', path: '/', emoji: '🏠' },
     { name: 'New Bill', path: '/pos', emoji: '🧾' },
-    { name: 'Bills History', path: '/', emoji: '📄' },
+    { name: 'Bills History', path: '/reports', emoji: '📄' },
     { name: 'Customers', path: '/customers', emoji: '👥' },
-    { name: 'Services', path: '/inventory', emoji: '✂️' },
-    { name: 'Staff', path: '/staff', emoji: '👨💼' },
+    { name: 'Services', path: '/services', emoji: '✂️' },
+    { name: 'Staff', path: '/staff', emoji: '👨‍💼' },
     { name: 'Reports', path: '/reports', emoji: '📊' },
     { name: 'Settings', path: '/settings', emoji: '⚙️' }
   ];

@@ -162,20 +162,7 @@ export const Staff: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Salary rate info */}
-                  <div className="border-t border-slate-100 pt-3 grid grid-cols-2 gap-4 text-xs">
-                    <div>
-                      <span className="block text-[10px] text-slate-400 font-extrabold uppercase">Base Salary</span>
-                      <span className="font-black text-slate-800">₹{member.baseSalary}</span>
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-slate-400 font-extrabold uppercase">Commission Rate</span>
-                      <span className="font-black text-[#eab308] flex items-center gap-0.5">
-                        <Percent className="w-3.5 h-3.5" />
-                        {member.commissionRate}%
-                      </span>
-                    </div>
-                  </div>
+
                 </motion.div>
               ))}
             </motion.div>

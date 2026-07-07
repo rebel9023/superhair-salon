@@ -13,6 +13,7 @@ import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
 import { Reports } from './pages/Reports';
 import { SetupAdmin } from './pages/SetupAdmin';
+import { Services } from './pages/Services';
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -76,6 +77,7 @@ export const App: React.FC = () => {
             <Route path="calendar" element={<Calendar />} />
             <Route path="customers" element={<Customers />} />
             <Route path="staff" element={<Staff />} />
+            <Route path="services" element={<Services />} />
             <Route path="inventory" element={<Inventory />} />
             <Route path="expenses" element={<Expenses />} />
             <Route path="settings" element={<Settings />} />

@@ -1,162 +1,467 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import Invoice from '../models/Invoice';
+import Staff from '../models/Staff';
+import Customer from '../models/Customer';
+import User from '../models/User';
+import { AuthRequest } from '../middlewares/auth';
 
-export const getReportsData = async (req: Request, res: Response, next: NextFunction) => {
+/* ─── Date Range helpers ─── */
+const getDateRange = (period: string, from?: string, to?: string) => {
+  const now = new Date();
+  let start: Date, end: Date;
+
+  end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
+  switch (period) {
+    case 'today':
+      start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'yesterday':
+      start = new Date(now);
+      start.setDate(start.getDate() - 1);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(start);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case 'last7':
+      start = new Date(now);
+      start.setDate(start.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'last30':
+      start = new Date(now);
+      start.setDate(start.getDate() - 29);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'month':
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'prevmonth':
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case 'year':
+      start = new Date(now.getFullYear(), 0, 1);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'custom':
+      start = from ? new Date(from) : new Date(now.getFullYear(), now.getMonth(), 1);
+      end   = to   ? new Date(to)   : new Date(now);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    default:
+      start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+  }
+  return { start, end };
+};
+
+/* ══════════════════════════════════════════════════
+   GET /api/v1/reports/summary
+══════════════════════════════════════════════════ */
+export const getSummary = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
+    const period = (req.query.period as string) || 'today';
+    const { start, end } = getDateRange(period, req.query.from as string, req.query.to as string);
 
-    const weekStart = new Date();
-    weekStart.setDate(weekStart.getDate() - 7);
-    weekStart.setHours(0, 0, 0, 0);
+    // Also compute weekly/monthly regardless of period for the top cards
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
+    const weekStart  = new Date(); weekStart.setDate(weekStart.getDate() - 6); weekStart.setHours(0, 0, 0, 0);
+    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1); monthStart.setHours(0, 0, 0, 0);
 
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
+    const [todayInv, weekInv, monthInv] = await Promise.all([
+      Invoice.find({ status: 'paid', createdAt: { $gte: todayStart, $lte: todayEnd } }).lean(),
+      Invoice.find({ status: 'paid', createdAt: { $gte: weekStart,  $lte: todayEnd } }).lean(),
+      Invoice.find({ status: 'paid', createdAt: { $gte: monthStart, $lte: todayEnd } }).lean(),
+    ]);
 
-    // Query month paid invoices
-    const monthInvoices = await Invoice.find({
-      status: 'paid',
-      createdAt: { $gte: monthStart }
+    const calcSummary = (invoices: any[]) => {
+      let revenue = 0, cash = 0, online = 0, services = 0;
+      let hairCuts = 0, beardStyling = 0, hairSpa = 0, hairColour = 0, facial = 0;
+      const custSet = new Set<string>();
+      let walkins = 0;
+
+      invoices.forEach(inv => {
+        revenue += inv.totalAmount;
+        inv.payments?.forEach((p: any) => {
+          if (p.method === 'cash') cash += p.amount;
+          else online += p.amount;
+        });
+        if (inv.customer) custSet.add(inv.customer.toString());
+        else walkins++;
+
+        inv.items?.forEach((it: any) => {
+          if (it.itemType === 'service') {
+            services += it.quantity;
+            const n = (it.name || '').toLowerCase();
+            if (n.includes('hair cut') || n.includes('haircut') || n === 'round cut') hairCuts += it.quantity;
+            if (n.includes('beard styling') || n.includes('clean shave') || n.includes('beard colour')) beardStyling += it.quantity;
+            if (n.includes('hair spa') || n.includes('scalp') || n.includes('dandruff')) hairSpa += it.quantity;
+            if (n.includes('colour') || n.includes('color') || n.includes('highlight')) hairColour += it.quantity;
+            if (n.includes('clean up') || n.includes('facial') || n.includes('d-tan') || n.includes('scrub')) facial += it.quantity;
+          }
+        });
+      });
+
+      return {
+        revenue, cash, online,
+        bills: invoices.length,
+        customers: custSet.size + walkins,
+        services, hairCuts, beardStyling, hairSpa, hairColour, facial
+      };
+    };
+
+    const todayData  = calcSummary(todayInv);
+    const weekData   = calcSummary(weekInv);
+    const monthData  = calcSummary(monthInv);
+
+    res.status(200).json({
+      success: true,
+      data: { today: todayData, week: weekData, month: monthData }
     });
+  } catch (error) { next(error); }
+};
 
-    const weekInvoices = monthInvoices.filter(inv => inv.createdAt >= weekStart);
-    const todayInvoices = monthInvoices.filter(inv => inv.createdAt >= todayStart && inv.createdAt <= todayEnd);
+/* ══════════════════════════════════════════════════
+   GET /api/v1/reports/services
+══════════════════════════════════════════════════ */
+export const getServiceReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const period = (req.query.period as string) || 'month';
+    const { start, end } = getDateRange(period, req.query.from as string, req.query.to as string);
 
-    // Summary calculations
-    const todaySales = todayInvoices.reduce((acc, curr) => acc + curr.totalAmount, 0);
-    const weeklySales = weekInvoices.reduce((acc, curr) => acc + curr.totalAmount, 0);
-    const monthlySales = monthInvoices.reduce((acc, curr) => acc + curr.totalAmount, 0);
-    const totalBillsToday = todayInvoices.length;
+    const invoices = await Invoice.find({
+      status: 'paid',
+      createdAt: { $gte: start, $lte: end }
+    }).lean();
 
-    let cashCollectionToday = 0;
-    let onlineCollectionToday = 0;
-    todayInvoices.forEach(inv => {
-      inv.payments.forEach(p => {
-        if (p.method === 'cash') {
-          cashCollectionToday += p.amount;
-        } else {
-          onlineCollectionToday += p.amount;
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
+    const weekStart  = new Date(); weekStart.setDate(weekStart.getDate() - 6); weekStart.setHours(0, 0, 0, 0);
+
+    const map: Record<string, any> = {};
+
+    invoices.forEach(inv => {
+      const dt = new Date(inv.createdAt);
+      const isToday = dt >= todayStart && dt <= todayEnd;
+      const isWeek  = dt >= weekStart;
+
+      inv.items?.forEach((it: any) => {
+        if (it.itemType !== 'service') return;
+        if (!map[it.name]) {
+          map[it.name] = { name: it.name, todayCount: 0, weekCount: 0, monthCount: 0, todayRevenue: 0, weekRevenue: 0, monthRevenue: 0 };
         }
+        const sub = it.price * it.quantity;
+        map[it.name].monthCount   += it.quantity;
+        map[it.name].monthRevenue += sub;
+        if (isWeek)  { map[it.name].weekCount   += it.quantity; map[it.name].weekRevenue  += sub; }
+        if (isToday) { map[it.name].todayCount  += it.quantity; map[it.name].todayRevenue += sub; }
       });
     });
 
-    // Unique customers count today
-    const uniqueCustIds = new Set();
-    let walkinCount = 0;
-    todayInvoices.forEach(inv => {
-      if (inv.customer) {
-        uniqueCustIds.add(inv.customer.toString());
-      } else {
-        walkinCount++;
+    const servicePerformance = Object.values(map).sort((a: any, b: any) => b.monthRevenue - a.monthRevenue);
+
+    res.status(200).json({ success: true, data: servicePerformance });
+  } catch (error) { next(error); }
+};
+
+/* ══════════════════════════════════════════════════
+   GET /api/v1/reports/staff
+══════════════════════════════════════════════════ */
+export const getStaffReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const period = (req.query.period as string) || 'month';
+    const { start, end } = getDateRange(period, req.query.from as string, req.query.to as string);
+
+    const invoices = await Invoice.find({
+      status: 'paid',
+      createdAt: { $gte: start, $lte: end }
+    }).populate('billedBy', 'name').lean();
+
+    const staffList = await Staff.find().populate('user', 'name').lean();
+    const staffMap: Record<string, any> = {};
+
+    staffList.forEach((st: any) => {
+      staffMap[st.user._id.toString()] = {
+        staffId: st._id.toString(),
+        name: st.user.name,
+        bills: 0, services: 0, hairCuts: 0,
+        revenue: 0, cash: 0, online: 0
+      };
+    });
+
+    invoices.forEach(inv => {
+      inv.items?.forEach((it: any) => {
+        if (it.itemType !== 'service') return;
+        const uid = it.stylist?.toString();
+        if (!uid || !staffMap[uid]) return;
+
+        const entry = staffMap[uid];
+        entry.services  += it.quantity;
+        entry.revenue   += it.price * it.quantity;
+        const n = (it.name || '').toLowerCase();
+        if (n.includes('hair cut') || n.includes('haircut') || n === 'round cut') entry.hairCuts += it.quantity;
+      });
+
+      // Attribute bill + payments to first stylist found in items
+      const firstStylistId = inv.items?.find((it: any) => it.stylist)?.stylist?.toString();
+      if (firstStylistId && staffMap[firstStylistId]) {
+        staffMap[firstStylistId].bills++;
+        inv.payments?.forEach((p: any) => {
+          if (p.method === 'cash') staffMap[firstStylistId].cash += p.amount;
+          else staffMap[firstStylistId].online += p.amount;
+        });
       }
     });
-    const totalCustomersToday = uniqueCustIds.size + walkinCount;
 
-    // Specific category calculations
-    let totalServicesToday = 0;
-    let hairCutsToday = 0;
-    let beardStylingToday = 0;
-    let hairSpaToday = 0;
-    let hairColourToday = 0;
-    let facialToday = 0;
+    const staffReport = Object.values(staffMap)
+      .map((s: any) => ({ ...s, avgBillValue: s.bills > 0 ? Math.round(s.revenue / s.bills) : 0 }))
+      .sort((a: any, b: any) => b.revenue - a.revenue);
 
-    todayInvoices.forEach(inv => {
-      inv.items.forEach((it: any) => {
-        if (it.itemType === 'service') {
-          totalServicesToday += it.quantity;
-          const nameLower = it.name.toLowerCase();
-          if (nameLower.includes('hair cut') || nameLower.includes('haircut') || nameLower.includes('cut')) {
-            hairCutsToday += it.quantity;
-          }
-          if (nameLower.includes('beard styling') || nameLower.includes('shave') || nameLower.includes('beard')) {
-            beardStylingToday += it.quantity;
-          }
-          if (nameLower.includes('hair spa') || nameLower.includes('spa')) {
-            hairSpaToday += it.quantity;
-          }
-          if (nameLower.includes('hair colour') || nameLower.includes('colour') || nameLower.includes('color')) {
-            hairColourToday += it.quantity;
-          }
-          if (nameLower.includes('facial') || nameLower.includes('clean up') || nameLower.includes('scrub') || nameLower.includes('tan')) {
-            facialToday += it.quantity;
-          }
-        }
-      });
+    res.status(200).json({ success: true, data: staffReport });
+  } catch (error) { next(error); }
+};
+
+/* ══════════════════════════════════════════════════
+   GET /api/v1/reports/customers
+══════════════════════════════════════════════════ */
+export const getCustomerReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const period = (req.query.period as string) || 'month';
+    const { start, end } = getDateRange(period, req.query.from as string, req.query.to as string);
+
+    const invoices = await Invoice.find({
+      status: 'paid',
+      createdAt: { $gte: start, $lte: end }
+    }).lean();
+
+    const totalCustomers = await Customer.countDocuments();
+    const newCustomers   = await Customer.countDocuments({ createdAt: { $gte: start, $lte: end } });
+
+    const custSpend: Record<string, { name: string; phone: string; visits: number; spent: number }> = {};
+    let walkins = 0;
+
+    invoices.forEach(inv => {
+      if (inv.customer) {
+        const id = inv.customer.toString();
+        if (!custSpend[id]) custSpend[id] = { name: inv.customerName || 'Customer', phone: inv.customerPhone || '', visits: 0, spent: 0 };
+        custSpend[id].visits++;
+        custSpend[id].spent += inv.totalAmount;
+      } else {
+        walkins++;
+      }
     });
 
-    // Service performance table data
-    const servicePerformanceMap: Record<string, {
-      name: string;
-      todayCount: number;
-      weekCount: number;
-      monthCount: number;
-      todayRevenue: number;
-      weekRevenue: number;
-      monthRevenue: number;
-    }> = {};
+    const custArray  = Object.values(custSpend);
+    const returning  = custArray.filter(c => c.visits > 1).length;
+    const topBySpend = [...custArray].sort((a, b) => b.spent - a.spent).slice(0, 10);
+    const topByVisit = [...custArray].sort((a, b) => b.visits - a.visits).slice(0, 10);
 
-    monthInvoices.forEach(inv => {
-      const isToday = inv.createdAt >= todayStart && inv.createdAt <= todayEnd;
-      const isWeek = inv.createdAt >= weekStart;
-
-      inv.items.forEach((it: any) => {
-        if (it.itemType === 'service') {
-          if (!servicePerformanceMap[it.name]) {
-            servicePerformanceMap[it.name] = {
-              name: it.name,
-              todayCount: 0,
-              weekCount: 0,
-              monthCount: 0,
-              todayRevenue: 0,
-              weekRevenue: 0,
-              monthRevenue: 0
-            };
-          }
-          const data = servicePerformanceMap[it.name];
-          const itemSubtotal = it.price * it.quantity;
-
-          data.monthCount += it.quantity;
-          data.monthRevenue += itemSubtotal;
-
-          if (isWeek) {
-            data.weekCount += it.quantity;
-            data.weekRevenue += itemSubtotal;
-          }
-          if (isToday) {
-            data.todayCount += it.quantity;
-            data.todayRevenue += itemSubtotal;
-          }
-        }
-      });
+    // Enrich with names from Customer collection
+    const custIds = Object.keys(custSpend).filter(id => mongoose.isValidObjectId(id));
+    const custDocs = await Customer.find({ _id: { $in: custIds } }, 'name phone').lean();
+    custDocs.forEach((c: any) => {
+      if (custSpend[c._id.toString()]) {
+        custSpend[c._id.toString()].name  = c.name;
+        custSpend[c._id.toString()].phone = c.phone;
+      }
     });
-
-    const servicePerformance = Object.values(servicePerformanceMap);
 
     res.status(200).json({
       success: true,
       data: {
-        summary: {
-          todaySales,
-          weeklySales,
-          monthlySales,
-          totalBillsToday,
-          cashCollectionToday,
-          onlineCollectionToday,
-          totalCustomersToday,
-          totalServicesToday,
-          hairCutsToday,
-          beardStylingToday,
-          hairSpaToday,
-          hairColourToday,
-          facialToday
-        },
-        servicePerformance
+        totalCustomers, newCustomers,
+        returningCustomers: returning,
+        walkinCustomers: walkins,
+        periodCustomers: custArray.length,
+        topBySpend: topBySpend.slice(0, 10),
+        topByVisits: topByVisit.slice(0, 10)
       }
     });
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 };
+
+/* ══════════════════════════════════════════════════
+   GET /api/v1/reports/payments
+══════════════════════════════════════════════════ */
+export const getPaymentReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const period = (req.query.period as string) || 'month';
+    const { start, end } = getDateRange(period, req.query.from as string, req.query.to as string);
+
+    const invoices = await Invoice.find({
+      status: 'paid',
+      createdAt: { $gte: start, $lte: end }
+    }).lean();
+
+    let cash = 0, upi = 0, card = 0, other = 0;
+    invoices.forEach(inv => {
+      inv.payments?.forEach((p: any) => {
+        if (p.method === 'cash') cash += p.amount;
+        else if (p.method === 'upi' || p.method === 'qr') upi += p.amount;
+        else if (p.method === 'card') card += p.amount;
+        else other += p.amount;
+      });
+    });
+
+    const total = cash + upi + card + other;
+    res.status(200).json({
+      success: true,
+      data: {
+        cash, upi, card, other, total,
+        cashPct:  total > 0 ? Math.round((cash  / total) * 100) : 0,
+        upiPct:   total > 0 ? Math.round((upi   / total) * 100) : 0,
+        cardPct:  total > 0 ? Math.round((card  / total) * 100) : 0,
+        otherPct: total > 0 ? Math.round((other / total) * 100) : 0,
+      }
+    });
+  } catch (error) { next(error); }
+};
+
+/* ══════════════════════════════════════════════════
+   GET /api/v1/reports/sales-chart
+══════════════════════════════════════════════════ */
+export const getSalesChart = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const period = (req.query.period as string) || 'last30';
+    const { start, end } = getDateRange(period, req.query.from as string, req.query.to as string);
+
+    const invoices = await Invoice.find({
+      status: 'paid',
+      createdAt: { $gte: start, $lte: end }
+    }).select('createdAt totalAmount').lean();
+
+    // Group by day
+    const dayMap: Record<string, { date: string; revenue: number; bills: number }> = {};
+    invoices.forEach(inv => {
+      const d = new Date(inv.createdAt).toISOString().split('T')[0];
+      if (!dayMap[d]) dayMap[d] = { date: d, revenue: 0, bills: 0 };
+      dayMap[d].revenue += inv.totalAmount;
+      dayMap[d].bills++;
+    });
+
+    const dailyData = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
+
+    // Group by month (last 12 months)
+    const monthMap: Record<string, { month: string; revenue: number; bills: number }> = {};
+    invoices.forEach(inv => {
+      const d = new Date(inv.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleString('en-IN', { month: 'short', year: '2-digit' });
+      if (!monthMap[key]) monthMap[key] = { month: label, revenue: 0, bills: 0 };
+      monthMap[key].revenue += inv.totalAmount;
+      monthMap[key].bills++;
+    });
+
+    const monthlyData = Object.values(monthMap).sort((a, b) => a.month.localeCompare(b.month));
+
+    res.status(200).json({ success: true, data: { dailyData, monthlyData } });
+  } catch (error) { next(error); }
+};
+
+/* ══════════════════════════════════════════════════
+   GET /api/v1/reports/recent-bills
+══════════════════════════════════════════════════ */
+export const getRecentBills = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const period = (req.query.period as string) || 'today';
+    const limit  = parseInt(req.query.limit as string) || 50;
+    const staffFilter   = req.query.staff   as string;
+    const paymentFilter = req.query.payment as string;
+
+    const { start, end } = getDateRange(period, req.query.from as string, req.query.to as string);
+
+    const query: any = { status: 'paid', createdAt: { $gte: start, $lte: end } };
+
+    const bills = await Invoice
+      .find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate('customer', 'name phone')
+      .populate('billedBy', 'name')
+      .lean();
+
+    // Filter by payment method in memory
+    let filtered = paymentFilter
+      ? bills.filter(b => b.payments?.some((p: any) => p.method === paymentFilter))
+      : bills;
+
+    res.status(200).json({ success: true, data: filtered });
+  } catch (error) { next(error); }
+};
+
+/* ══════════════════════════════════════════════════
+   GET /api/v1/reports/top-performers
+══════════════════════════════════════════════════ */
+export const getTopPerformers = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const period = (req.query.period as string) || 'month';
+    const { start, end } = getDateRange(period, req.query.from as string, req.query.to as string);
+
+    const invoices = await Invoice.find({
+      status: 'paid',
+      createdAt: { $gte: start, $lte: end }
+    }).lean();
+
+    // Top staff by revenue
+    const staffRevMap: Record<string, number> = {};
+    // Top service by count
+    const serviceCountMap: Record<string, number> = {};
+    // Best day
+    const dayRevMap: Record<string, number> = {};
+    // Top customer by spend
+    const custSpendMap: Record<string, { name: string; spent: number }> = {};
+
+    invoices.forEach(inv => {
+      const day = new Date(inv.createdAt).toISOString().split('T')[0];
+      dayRevMap[day] = (dayRevMap[day] || 0) + inv.totalAmount;
+
+      if (inv.customer) {
+        const id = inv.customer.toString();
+        if (!custSpendMap[id]) custSpendMap[id] = { name: inv.customerName || 'Customer', spent: 0 };
+        custSpendMap[id].spent += inv.totalAmount;
+      }
+
+      inv.items?.forEach((it: any) => {
+        if (it.itemType !== 'service') return;
+        const uid = it.stylist?.toString();
+        if (uid) staffRevMap[uid] = (staffRevMap[uid] || 0) + it.price * it.quantity;
+        serviceCountMap[it.name] = (serviceCountMap[it.name] || 0) + it.quantity;
+      });
+    });
+
+    // Resolve top staff name
+    const topStaffId = Object.keys(staffRevMap).sort((a, b) => staffRevMap[b] - staffRevMap[a])[0];
+    let topStaffName = 'N/A', topStaffRevenue = 0;
+    if (topStaffId) {
+      const u = await User.findById(topStaffId, 'name').lean();
+      topStaffName    = (u as any)?.name || 'Unknown';
+      topStaffRevenue = staffRevMap[topStaffId];
+    }
+
+    const topServiceEntry = Object.keys(serviceCountMap).sort((a, b) => serviceCountMap[b] - serviceCountMap[a])[0];
+    const bestDayEntry    = Object.keys(dayRevMap).sort((a, b) => dayRevMap[b] - dayRevMap[a])[0];
+    const topCustEntry    = Object.values(custSpendMap).sort((a, b) => b.spent - a.spent)[0];
+
+    res.status(200).json({
+      success: true,
+      data: {
+        topStaff:    { name: topStaffName,  revenue: topStaffRevenue },
+        topService:  { name: topServiceEntry  || 'N/A', count: topServiceEntry  ? serviceCountMap[topServiceEntry]  : 0 },
+        bestDay:     { date: bestDayEntry    || 'N/A', revenue: bestDayEntry    ? dayRevMap[bestDayEntry]    : 0 },
+        topCustomer: topCustEntry ? { name: topCustEntry.name, spent: topCustEntry.spent } : { name: 'N/A', spent: 0 }
+      }
+    });
+  } catch (error) { next(error); }
+};
+
+/* Legacy single endpoint — kept for backwards compat */
+export const getReportsData = getSummary;
